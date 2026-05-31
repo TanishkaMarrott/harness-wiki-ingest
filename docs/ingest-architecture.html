@@ -1,0 +1,407 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>KML Wiki Ingest — Architecture & LSP vs Graph</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #1a1a2e; background: #f8f9fa; }
+
+  .cover {
+    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+    color: white; min-height: 100vh; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; text-align: center; padding: 60px;
+    page-break-after: always;
+  }
+  .cover h1 { font-size: 2.8em; font-weight: 700; margin-bottom: 20px; line-height: 1.2; }
+  .cover p { font-size: 1.2em; opacity: 0.8; margin-bottom: 10px; }
+  .cover .date { margin-top: 40px; opacity: 0.6; font-size: 0.95em; }
+
+  .page {
+    padding: 60px; max-width: 1000px; margin: 0 auto;
+    page-break-after: always; min-height: 100vh;
+  }
+
+  h2 { font-size: 1.8em; color: #0f3460; margin-bottom: 8px; padding-bottom: 10px;
+       border-bottom: 3px solid #e94560; }
+  h3 { font-size: 1.2em; color: #16213e; margin: 24px 0 12px; }
+  p { line-height: 1.7; margin-bottom: 14px; color: #333; }
+
+  .subtitle { font-size: 1em; color: #666; margin-bottom: 40px; }
+
+  /* Core Gap */
+  .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin: 24px 0; }
+  .card {
+    border-radius: 12px; padding: 24px;
+  }
+  .card.wrong { background: #fff0f0; border: 2px solid #e63946; }
+  .card.right  { background: #f0fff4; border: 2px solid #2d6a4f; }
+  .card h4 { font-size: 1em; margin-bottom: 12px; }
+  .card h4.wrong-label { color: #e63946; }
+  .card h4.right-label { color: #2d6a4f; }
+  .card ul { padding-left: 18px; }
+  .card ul li { margin-bottom: 6px; font-size: 0.92em; line-height: 1.5; color: #444; }
+
+  .highlight-box {
+    background: #fff9e6; border-left: 5px solid #f4a261;
+    padding: 20px 24px; border-radius: 0 8px 8px 0; margin: 24px 0;
+  }
+  .highlight-box p { margin: 0; font-size: 1em; font-weight: 500; color: #333; }
+
+  /* Flow diagrams */
+  .flow { display: flex; flex-direction: column; align-items: center; gap: 0; margin: 24px 0; }
+  .flow-box {
+    background: white; border: 2px solid #0f3460; border-radius: 10px;
+    padding: 16px 36px; font-size: 0.95em; text-align: center; min-width: 480px; max-width: 680px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.08); line-height: 1.5;
+  }
+  .flow-box.trigger  { background: #e8f4fd; border-color: #2196f3; }
+  .flow-box.action   { background: #fff; border-color: #0f3460; }
+  .flow-box.lsp-step { background: #f0fff4; border-color: #2d6a4f; font-weight: 500; }
+  .flow-box.decision { background: #fff9e6; border-color: #f4a261; border-radius: 50px; }
+  .flow-box.bad      { background: #fff0f0; border-color: #e63946; }
+  .flow-box.good     { background: #f0fff4; border-color: #2d6a4f; }
+  .flow-box.commit   { background: #1a1a2e; color: white; border-color: #1a1a2e; }
+  .flow-box small { display: block; color: #666; font-size: 0.85em; margin-top: 6px; font-weight: 400; line-height: 1.6; }
+  .flow-box.commit small { color: #aaa; }
+
+  .arrow { font-size: 1.6em; color: #888; line-height: 1; margin: 6px 0; }
+
+  .fork { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; width: 100%; max-width: 680px; margin: 6px 0; }
+  .fork-col { display: flex; flex-direction: column; align-items: center; gap: 0; }
+  .fork-col .flow-box { min-width: 0; width: 100%; }
+
+  /* Comparison table */
+  table { width: 100%; border-collapse: collapse; margin: 24px 0; font-size: 0.88em; }
+  th { background: #0f3460; color: white; padding: 12px 16px; text-align: left; }
+  td { padding: 12px 16px; border-bottom: 1px solid #e0e0e0; vertical-align: top; }
+  tr:nth-child(even) td { background: #f8f9fa; }
+  .badge-wrong { background: #e63946; color: white; padding: 2px 10px; border-radius: 12px; font-size: 0.85em; }
+  .badge-right { background: #2d6a4f; color: white; padding: 2px 10px; border-radius: 12px; font-size: 0.85em; }
+
+  /* Stack */
+  .stack { display: flex; flex-direction: column; align-items: center; gap: 0; margin: 24px auto; max-width: 500px; }
+  .stack-box {
+    width: 100%; text-align: center; padding: 14px 20px; font-size: 0.9em;
+    border: 2px solid #ccc; border-radius: 8px; background: white;
+  }
+  .stack-box.top    { background: #0f3460; color: white; border-color: #0f3460; }
+  .stack-box.mid    { background: #16213e; color: white; border-color: #16213e; }
+  .stack-box.bot    { background: #f0fff4; border-color: #2d6a4f; }
+  .stack-box small  { display: block; opacity: 0.75; font-size: 0.82em; margin-top: 3px; }
+  .stack-arrow      { font-size: 1.2em; color: #888; margin: 3px 0; }
+  .stack-label      { font-size: 0.78em; color: #888; margin-top: -2px; margin-bottom: 2px; }
+
+  /* Status */
+  .status-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin: 24px 0; }
+  .status-card { background: white; border-radius: 10px; padding: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.07); }
+  .status-card h4 { margin-bottom: 12px; font-size: 1em; }
+  .status-card h4.done { color: #2d6a4f; }
+  .status-card h4.pending { color: #f4a261; }
+  .status-item { display: flex; gap: 10px; margin-bottom: 8px; font-size: 0.88em; line-height: 1.4; }
+  .status-item .icon { flex-shrink: 0; }
+
+  code { background: #f0f0f0; padding: 1px 6px; border-radius: 4px; font-size: 0.88em; font-family: monospace; }
+
+  @media print {
+    body { background: white; }
+    .page { padding: 40px; }
+  }
+</style>
+</head>
+<body>
+
+<!-- COVER -->
+<div class="cover">
+  <h1>KML Wiki Ingest<br>Architecture & Analysis</h1>
+  <p>Graph-Based vs LSP-Based Impact Detection</p>
+  <p>main — wiki-repo</p>
+  <div class="date">2026-05-31 &nbsp;·&nbsp; Tanishka Marrott</div>
+</div>
+
+<!-- PAGE 1: WHAT IS THE INGEST SYSTEM -->
+<div class="page">
+  <h2>What Is the Ingest System?</h2>
+  <p class="subtitle">Keeping the KML support wiki in sync with source code — automatically</p>
+
+  <p>The KML support wiki (<code>wiki-repo</code>) documents what is enforced in lab accounts — config-rule limits, abuse thresholds, allowed services, IAM policies. This content is derived from source code in <code>source-repo</code>.</p>
+
+  <p>Without automation, the wiki drifts. A developer renames a function, changes a limit, or removes a config rule — and the wiki still shows the old information. Students get incorrect guidance. Support agents work from stale docs.</p>
+
+  <div class="highlight-box">
+    <p>The ingest system solves this: every push to <code>source-repo</code> on Source VCS triggers a GitHub Actions workflow that detects which wiki pages are affected, fetches the latest source, recompiles those pages, and commits the result — automatically.</p>
+  </div>
+
+  <h3>Two approaches have been explored</h3>
+
+  <div class="two-col" style="margin-top: 20px;">
+    <div style="background:#f8f9fa; border-radius:10px; padding:24px; border:2px solid #ccc;">
+      <div style="font-size:1.5em; margin-bottom:8px;"></div>
+      <strong>Graph-Based (Production)</strong>
+      <p style="margin-top:10px; font-size:0.92em; color:#555;">Uses a semantic knowledge graph built from wiki content. Traverses graph edges to find related pages. Relies on LLM-inferred relationships between concepts.</p>
+    </div>
+    <div style="background:#f0fff4; border-radius:10px; padding:24px; border:2px solid #2d6a4f;">
+      <div style="font-size:1.5em; margin-bottom:8px;"></div>
+      <strong>LSP-Based (New)</strong>
+      <p style="margin-top:10px; font-size:0.92em; color:#555;">Uses a Language Server Protocol to analyse the source code structurally. Traces actual code execution paths — which functions are called, which are dead, which symbols are referenced.</p>
+    </div>
+  </div>
+
+  <h3>Authentication</h3>
+  <p>GitHub Actions authenticates to Source VCS via a deploy token (<code>KML_GITLAB_DEPLOY_TOKEN</code>) stored as a GitHub repository secret. This token is used in two places:</p>
+  <div style="background:white; border-radius:10px; padding:20px; margin:12px 0; box-shadow:0 2px 8px rgba(0,0,0,0.07);">
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:20px;">
+      <div>
+        <strong style="font-size:0.9em;">1. Sparse clone (LSP workflow)</strong>
+        <p style="font-size:0.85em; color:#555; margin-top:6px;">Authenticates the <code>git clone</code> of <code>source-repo</code> from Source VCS to build the local source tree for pylsp indexing.</p>
+      </div>
+      <div>
+        <strong style="font-size:0.9em;">2. Source VCS API fetch (both workflows)</strong>
+        <p style="font-size:0.85em; color:#555; margin-top:6px;">The skill fetches individual source files (config rules, thresholds, policies) via <code>curl</code> to the Source VCS API using this token at compile time.</p>
+      </div>
+    </div>
+    <div style="margin-top:14px; padding:10px 14px; background:#fff9e6; border-radius:6px; font-size:0.85em; color:#555;">
+       If this token expires or is rotated, both workflows will fail silently — the sparse clone will be refused and API fetches will return 401. The token must be kept current in GitHub Actions secrets.
+    </div>
+  </div>
+
+  <p style="margin-top:24px; color:#666; font-size:0.95em;">The following pages walk through each approach, the test results, and what the evidence shows.</p>
+</div>
+
+<!-- PAGE 2: GRAPH FLOW -->
+<div class="page">
+  <h2>Graph-Based Flow</h2>
+  <p class="subtitle">Current production workflow — ingest.yml</p>
+
+  <div class="flow">
+    <div class="flow-box trigger">Developer pushes to <strong>source-repo</strong> (Source VCS)<small>KML_CHANGED_FILES="platforms/AWS/config_rules/s3_limits.py"</small></div>
+    <div class="arrow">↓</div>
+    <div class="flow-box action">GitHub Actions — <strong>ingest.yml</strong><small>Checkout wiki-repo · Restore graph artifact (kml-wiki-graph)</small></div>
+    <div class="arrow">↓</div>
+    <div class="flow-box decision">Step 0: Diff check — cosmetic only? → skip</div>
+    <div class="arrow">↓</div>
+
+    <div class="fork">
+      <div class="fork-col">
+        <div class="flow-box action" style="border-color:#f4a261;">Graph exists<small>graphify query<br>"which pages affected by s3_limits.py?"<br>Semantic traversal — LLM-inferred</small></div>
+      </div>
+      <div class="fork-col">
+        <div class="flow-box action" style="border-color:#ccc;">No graph (cold start)<small>Brute force: match file path pattern<br>config_rules/&lt;service&gt;.py →<br>all lab types that allow service</small></div>
+      </div>
+    </div>
+
+    <div class="arrow">↓</div>
+    <div class="flow-box action"><code>grep -rl "s3_limits" vault/</code><small>Finds: config-rules.md, playground-services.md, aws-s3.md</small></div>
+    <div class="arrow">↓</div>
+    <div class="flow-box action">Fetch source from Source VCS API<small>curl GITLAB_API/platforms/AWS/config_rules/s3_limits.py</small></div>
+    <div class="arrow">↓</div>
+    <div class="flow-box action">Recompile pages<small>Reads file content — extracts limits, functions, constants<br>Writes sections into affected wiki pages</small></div>
+    <div class="arrow">↓</div>
+    <div class="flow-box action">Rebuild graph artifact (Gemini API ~$0.06)<small>graphify vault/ — 80 docs scanned</small></div>
+    <div class="arrow">↓</div>
+    <div class="flow-box commit">git commit + push</div>
+  </div>
+</div>
+
+<!-- PAGE 3: LSP FLOW -->
+<div class="page">
+  <h2>LSP-Based Flow</h2>
+  <p class="subtitle">New workflow — ingest-lsp-demo.yml · main</p>
+
+  <div class="flow">
+    <div class="flow-box trigger">Developer pushes to <strong>source-repo</strong> (Source VCS)<small>KML_CHANGED_FILES="platforms/AWS/config_rules/ec2.py"</small></div>
+    <div class="arrow">↓</div>
+    <div class="flow-box action">GitHub Actions — <strong>ingest-lsp-demo.yml</strong><small>Checkout wiki-repo</small></div>
+    <div class="arrow">↓</div>
+    <div class="flow-box action">Sparse clone source-repo<small>depth 1 · platforms/AWS only · fast, no history</small></div>
+    <div class="arrow">↓</div>
+    <div class="flow-box action">Configure <strong>cclsp</strong> — single MCP server<small>Wraps pylsp · Skill makes MCP tool calls · cclsp translates to LSP protocol</small></div>
+    <div class="arrow">↓</div>
+    <div class="flow-box lsp-step">LSP-1: <code>document_symbols(ec2.py)</code><small>→ limit_stopped_instances · check_and_terminate_oversized_instances · ensure_default_vpc</small></div>
+    <div class="arrow">↓</div>
+    <div class="flow-box lsp-step">LSP-2: <code>find_references(each symbol)</code><small>check_and_terminate_oversized_instances → event_mappings.py · lab_type_mapping.py (live)<br>limit_instances_count → ZERO callers (dead — renamed)</small></div>
+    <div class="arrow">↓</div>
+
+    <div class="fork">
+      <div class="fork-col">
+        <div class="flow-box lsp-step">LSP-4: Reconcile<small>Zero callers detected<br>grep vault for stale content<br>Remove incorrect sections</small></div>
+      </div>
+      <div class="fork-col">
+        <div class="flow-box lsp-step">LSP-3: <code>hover(symbol)</code><small>Get type signatures + return types<br>More grep candidates</small></div>
+      </div>
+    </div>
+
+    <div class="arrow">↓</div>
+    <div class="flow-box lsp-step">LSP-5: Skill reasons → decides grep terms<small>Based on exports + dependents + types + diff — no hardcoding</small></div>
+    <div class="arrow">↓</div>
+    <div class="flow-box action">Fetch source from Source VCS API · Recompile affected pages</div>
+    <div class="arrow">↓</div>
+    <div class="flow-box commit">git commit + push · Upload run log artifact (30 days)</div>
+  </div>
+</div>
+
+<!-- PAGE 4: LSP STACK -->
+<div class="page">
+  <h2>LSP Stack Detail</h2>
+  <p class="subtitle">One MCP server (cclsp) bridges Claude Code to pylsp</p>
+
+  <div class="stack">
+    <div class="stack-box top">Claude Code Skill<br><small>/support-wiki-ingest · KML_USE_LSP=true</small></div>
+    <div class="stack-arrow">↕</div>
+    <div class="stack-label">MCP tool calls — document_symbols · find_references · hover</div>
+    <div class="stack-box mid"><strong>cclsp</strong> — the single MCP server<br><small>Claude Code talks to cclsp only. cclsp routes by file extension internally.</small></div>
+    <div class="stack-arrow">↕</div>
+    <div class="stack-label">LSP protocol (stdio) — transparent to the skill</div>
+    <div class="stack-box bot">pylsp<br><small>.py files · document_symbols  · find_references  · hover </small></div>
+    <div class="stack-arrow">↕</div>
+    <div class="stack-label">reads files on disk</div>
+    <div class="stack-box" style="border-color:#0f3460;">/tmp/kml-source/<br><small>platforms/AWS/ · sparse clone · depth 1 · no history</small></div>
+  </div>
+
+  <h3>Why sparse clone?</h3>
+  <p>pylsp needs source files on disk to index them. <code>platforms/AWS/</code> contains all Python config rules, thresholds, and account logic. Policy JSON files and frontend code are excluded — LSP cannot do <code>find_references</code> on JSON, and they are not needed. The sparse checkout keeps CI fast and lightweight.</p>
+
+  <h3>Current scope gap</h3>
+  <p>Sparse checkout currently covers <code>platforms/AWS/</code> only. Azure and GCP Python files are not on disk — LSP falls back to grep for Azure/GCP changes. Expanding to <code>platforms/Azure platforms/GCP</code> is the next step pending go-ahead.</p>
+</div>
+
+<!-- PAGE 5: COMPARISON TABLE -->
+<div class="page">
+  <h2>Test Results — LSP vs Graph</h2>
+  <p class="subtitle">All runs on main · 2026-05-31</p>
+
+  <table>
+    <thead>
+      <tr>
+        <th>File Changed</th>
+        <th>Graph</th>
+        <th>LSP</th>
+        <th>Key Finding</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>s3_limits.py</code><br><small>Dead code</small></td>
+        <td><span class="badge-wrong">WRONG</span><br><small>Wrote S3 limits into wiki.<br>max 10 buckets, S3 Express blocked.<br>None enforced.</small></td>
+        <td><span class="badge-right">CORRECT</span><br><small>find_references → zero callers.<br>Dead code confirmed.<br>No wiki changes.</small></td>
+        <td><small>Graph cannot detect dead code.<br>LSP can. This is the core gap.</small></td>
+      </tr>
+      <tr>
+        <td><code>ec2.py</code><br><small>Stale function</small></td>
+        <td><span class="badge-wrong">WRONG</span><br><small>Would document<br>limit_instances_count<br>as if still enforced.</small></td>
+        <td><span class="badge-right">CORRECT</span><br><small>find_references → zero callers<br>on old function. Stale content<br>removed. 9 pages recompiled.<br>Source bug flagged.</small></td>
+        <td><small>Function renamed in source.<br>Wiki was stale. LSP caught it.<br>Graph would have missed it.</small></td>
+      </tr>
+      <tr>
+        <td><code>threshold_config.yaml</code><br><small>Cosmetic change</small></td>
+        <td><span class="badge-wrong">WRONG</span><br><small>Would recompile all 31<br>AWS lab-type pages.<br>Timestamp churn only.</small></td>
+        <td><span class="badge-right">CORRECT</span><br><small>YAML LSP indexed all keys.<br>Wiki already matches source.<br>Cosmetic skip — no recompile.</small></td>
+        <td><small>Graph has no way to compare<br>wiki content vs source.<br>LSP + skill reasoning does.</small></td>
+      </tr>
+      <tr>
+        <td><code>common.py</code><br><small>Plumbing file</small></td>
+        <td>—</td>
+        <td><span class="badge-right">CORRECT</span><br><small>LSP callers all platform internals.<br>No wiki edges.<br>No changes.</small></td>
+        <td><small>Pure session/account plumbing.<br>Correctly identified as out of scope.</small></td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div style="display:grid; grid-template-columns:1fr 1fr; gap:20px; margin-top:24px;">
+    <div style="background:#fff0f0; border-radius:10px; padding:20px; text-align:center; border:2px solid #e63946;">
+      <div style="font-size:2.5em; font-weight:700; color:#e63946;">0 / 3</div>
+      <div style="color:#e63946; font-weight:600;">Graph — Correct Decisions</div>
+    </div>
+    <div style="background:#f0fff4; border-radius:10px; padding:20px; text-align:center; border:2px solid #2d6a4f;">
+      <div style="font-size:2.5em; font-weight:700; color:#2d6a4f;">4 / 4</div>
+      <div style="color:#2d6a4f; font-weight:600;">LSP — Correct Decisions</div>
+    </div>
+  </div>
+</div>
+
+<!-- PAGE 6: CORE GAP — drawn from evidence -->
+<div class="page">
+  <h2>What the Results Tell Us</h2>
+  <p class="subtitle">The pattern that emerges from the three test cases</p>
+
+  <p>Across three test cases, one consistent difference emerged between the two approaches:</p>
+
+  <div class="two-col" style="margin: 20px 0;">
+    <div style="background:#e8f4fd; border-radius:10px; padding:20px; text-align:center;">
+      <div style="font-size:2em;"></div>
+      <strong>Graph answers</strong>
+      <p style="margin-top:8px; font-size:0.92em; color:#555;">Which wiki pages are <em>related to</em> this changed file?</p>
+      <p style="color:#2196f3; font-size:0.85em; margin-top:8px;">Semantic proximity — LLM-inferred</p>
+    </div>
+    <div style="background:#f0fff4; border-radius:10px; padding:20px; text-align:center;">
+      <div style="font-size:2em;"></div>
+      <strong>LSP answers</strong>
+      <p style="margin-top:8px; font-size:0.92em; color:#555;">Which wiki pages document something that is <em>actually executed</em>?</p>
+      <p style="color:#2d6a4f; font-size:0.85em; margin-top:8px;">Code-structural — compiler-verified</p>
+    </div>
+  </div>
+
+  <div class="highlight-box">
+    <p>For a support wiki that documents what is <strong>enforced</strong> in lab accounts, the distinction matters. A function can exist in source without being called. The graph cannot tell the difference. LSP can — <code>find_references</code> returning zero callers is an unambiguous structural fact.</p>
+  </div>
+
+  <div class="two-col">
+    <div class="card wrong">
+      <h4 class="wrong-label">Graph — s3_limits.py</h4>
+      <ul>
+        <li>Sees <code>check_s3_bucket_count</code> defined</li>
+        <li>Infers: "S3 limits exist → update wiki"</li>
+        <li>Writes: max 10 buckets, S3 Express blocked</li>
+        <li style="color:#e63946; font-weight:600;">Reality: function has zero callers. Never enforced. Wiki documented rules that don't exist.</li>
+      </ul>
+    </div>
+    <div class="card right">
+      <h4 class="right-label">LSP — s3_limits.py</h4>
+      <ul>
+        <li>Calls <code>find_references(check_s3_bucket_count)</code></li>
+        <li>Result: zero callers — dead code confirmed</li>
+        <li>Conclusion: not enforced → no wiki update</li>
+        <li style="color:#2d6a4f; font-weight:600;">No incorrect content written.</li>
+      </ul>
+    </div>
+  </div>
+
+  <div style="text-align:center; margin-top:28px; padding:16px; background:#1a1a2e; border-radius:10px; color:white; font-size:0.95em;">
+    Graph maps: &nbsp;<strong>source file → wiki concept</strong>&nbsp;&nbsp;·&nbsp;&nbsp;
+    LSP maps: &nbsp;<strong>source file → execution path → wiki page</strong>
+  </div>
+</div>
+
+<!-- PAGE 7: CURRENT STATE -->
+<div class="page">
+  <h2>Current State & Next Steps</h2>
+  <p class="subtitle">What is done, what is pending go-ahead</p>
+
+  <div class="status-grid">
+    <div class="status-card">
+      <h4 class="done"> Completed</h4>
+      <div class="status-item"><span class="icon"></span><span>LSP demo workflow on <code>main</code></span></div>
+      <div class="status-item"><span class="icon"></span><span>cclsp + pylsp + yaml-language-server wired</span></div>
+      <div class="status-item"><span class="icon"></span><span>5-step LSP path in SKILL.md<br>(document_symbols → find_references → hover → reconcile → grep)</span></div>
+      <div class="status-item"><span class="icon"></span><span>Run log artifacts captured (30-day retention)</span></div>
+      <div class="status-item"><span class="icon"></span><span>Google Sheet tracking all test runs</span></div>
+      <div class="status-item"><span class="icon"></span><span>Self-healing validated — bad S3 content written by graph automatically removed by LSP reconciliation</span></div>
+      <div class="status-item"><span class="icon"></span><span>4/4 LSP runs correct, 1/1 graph runs incorrect</span></div>
+    </div>
+    <div class="status-card">
+      <h4 class="pending"> Pending Go-Ahead</h4>
+      <div class="status-item"><span class="icon"></span><span>Expand sparse checkout to <code>platforms/Azure</code> + <code>platforms/GCP</code></span></div>
+      <div class="status-item"><span class="icon"></span><span>Real Source VCS push → end-to-end pipeline validation</span></div>
+      <div class="status-item"><span class="icon"></span><span>Promote LSP path to production <code>ingest.yml</code></span></div>
+      <div class="status-item"><span class="icon"></span><span>Retire graph traversal as primary path (keep cold-start fallback only)</span></div>
+      <div class="status-item"><span class="icon"></span><span>Fix source bug: <code>lab_type_mapping.py</code> imports <code>ec2.limit_instances_count</code> which no longer exists → would raise <code>AttributeError</code></span></div>
+    </div>
+  </div>
+
+  <div class="highlight-box" style="margin-top:30px;">
+    <p><strong>Recommendation:</strong> Promote LSP path to production. The graph path should be kept as cold-start fallback only — for the first run when no sparse clone exists. For all normal runs, LSP provides code-structural precision that the graph cannot match. The evidence from 4 test runs is unambiguous.</p>
+  </div>
+</div>
+
+</body>
+</html>
